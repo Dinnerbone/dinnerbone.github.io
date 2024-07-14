@@ -1,5 +1,3 @@
-import { createTokenAuth } from "@octokit/auth-token";
-import { createUnauthenticatedAuth } from "@octokit/auth-unauthenticated";
 import {
   AVM2Report,
   DownloadKey,
@@ -9,24 +7,12 @@ import {
   ReleaseDownloads,
   repository,
 } from "@/app/downloads/config";
-import { Octokit } from "octokit";
 import { RestEndpointMethodTypes } from "@octokit/plugin-rest-endpoint-methods";
 import { parse } from "node-html-parser";
-
-function createGithubAuth() {
-  if (process.env.GITHUB_TOKEN) {
-    return createTokenAuth(process.env.GITHUB_TOKEN);
-  } else {
-    return createUnauthenticatedAuth({reason: "Please provide a GitHub Personal Access Token via the GITHUB_TOKEN environment variable."});
-  }
-}
-
-function throwBuildError() {
-  throw new Error("Build failed");
-}
+import { createOctokit, throwBuildError } from "@/github_auth";
 
 export async function getLatestReleases(): Promise<GithubRelease[]> {
-  const octokit = new Octokit({ authStrategy: createGithubAuth });
+  const octokit = createOctokit();
   try {
     const releases = await octokit.rest.repos.listReleases({
       per_page: maxNightlies + 2, // more than we need to account for a possible draft release + possible full release
@@ -39,7 +25,7 @@ export async function getLatestReleases(): Promise<GithubRelease[]> {
       const downloads: ReleaseDownloads = {};
       for (const asset of release.assets) {
         if (asset.name === "avm2_report.json") {
-            avm2_report_asset_id = asset.id;
+          avm2_report_asset_id = asset.id;
         }
         for (const [key, pattern] of Object.entries(FilenamePatterns)) {
           if (asset.name.indexOf(pattern) > -1) {
@@ -67,17 +53,19 @@ export async function getLatestReleases(): Promise<GithubRelease[]> {
 export async function getWeeklyContributions(): Promise<
   RestEndpointMethodTypes["repos"]["getCommitActivityStats"]["response"]
 > {
-  const octokit = new Octokit({ authStrategy: createGithubAuth });
+  const octokit = createOctokit();
   return octokit.rest.repos.getCommitActivityStats(repository);
 }
 export async function fetchReport(): Promise<AVM2Report | undefined> {
   const releases = await getLatestReleases();
-  const latest = releases.find(release => release.avm2_report_asset_id !== undefined);
+  const latest = releases.find(
+    (release) => release.avm2_report_asset_id !== undefined,
+  );
   if (!latest?.avm2_report_asset_id) {
     throwBuildError();
     return;
   }
-  const octokit = new Octokit({ authStrategy: createGithubAuth });
+  const octokit = createOctokit();
   const asset = await octokit.rest.repos.getReleaseAsset({
     owner: repository.owner,
     repo: repository.repo,
@@ -95,7 +83,7 @@ export async function fetchReport(): Promise<AVM2Report | undefined> {
 }
 
 export async function getAVM1Progress(): Promise<number> {
-  const octokit = new Octokit({ authStrategy: createGithubAuth });
+  const octokit = createOctokit();
   const issues = await octokit.rest.issues.listForRepo({
     owner: repository.owner,
     repo: repository.repo,
@@ -114,9 +102,13 @@ export async function getAVM1Progress(): Promise<number> {
       continue;
     }
     const topLevelRoot = parse(topLevelContent);
-    totalItems += topLevelRoot.querySelectorAll("input.task-list-item-checkbox").length;
-    completedItems += topLevelRoot.querySelectorAll("input.task-list-item-checkbox:checked").length;
+    totalItems += topLevelRoot.querySelectorAll(
+      "input.task-list-item-checkbox",
+    ).length;
+    completedItems += topLevelRoot.querySelectorAll(
+      "input.task-list-item-checkbox:checked",
+    ).length;
   }
   if (totalItems < 3348) throwBuildError();
-  return Math.round(completedItems/totalItems*100);
+  return Math.round((completedItems / totalItems) * 100);
 }
