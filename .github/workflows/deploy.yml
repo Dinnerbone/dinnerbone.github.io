@@ -75,7 +75,7 @@ jobs:
         run: ${{ steps.detect-package-manager.outputs.runner }} next build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BASE_URL: https://ruffle.rs
+          BASE_URL: https://dinnerbone.github.io
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

@@ -13,7 +13,7 @@ function createGithubAuth() {
   }
 }
 
-export function createOctokit() {
+export function createOctokit(): Octokit {
   return new Octokit({ authStrategy: createGithubAuth });
 }
 
