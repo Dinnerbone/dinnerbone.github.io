@@ -50,6 +50,9 @@ function findPanic(contents: string): Panic | null {
     "/rustc/.../library",
   );
 
+  // e.g. LoaderInfoObject { ptr: 0x58bfab8 }
+  contents = contents.replaceAll(/ptr: 0x([a-f0-9]+)/g, "ptr: 0x...");
+
   const likelyHasError = contents.indexOf("# Error Info\n") > -1;
 
   const commit = findMatch(/Commit: (\S+)/, contents);
