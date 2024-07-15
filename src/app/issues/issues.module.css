@@ -1,3 +1,25 @@
 .panicCard {
   background-color: var(--ruffle-blue-9);
 }
+
+.filterBar {
+  background-color: var(--ruffle-blue-7);
+  margin-bottom: 15px;
+}
+
+.sortSelectInput {
+  --input-bg: var(--ruffle-blue-9);
+}
+
+.sortSelectDropdown {
+  background-color: var(--ruffle-blue-9);
+}
+
+@media (hover: hover) {
+  .sortSelectOption:hover:where(
+      :not([data-combobox-selected], [data-combobox-disabled])
+    ) {
+    background-color: var(--ruffle-orange-4);
+    color: var(--ruffle-blue-8);
+  }
+}

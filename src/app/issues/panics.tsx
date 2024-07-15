@@ -1,216 +1,256 @@
-import { createOctokit } from "@/github_auth";
-import { RestEndpointMethodTypes } from "@octokit/plugin-rest-endpoint-methods";
+"use client";
 
-interface PanicSummary {
-  buildTime: Date | null;
-}
+import { IssuesByPanic, PanicInfo } from "@/app/issues/data";
+import {
+  Badge,
+  Card,
+  CardSection,
+  Checkbox,
+  Code,
+  Group,
+  List,
+  ListItem,
+  Select,
+  Stack,
+  Table,
+  TableTbody,
+  TableTd,
+  TableTh,
+  TableThead,
+  TableTr,
+  Tabs,
+  TabsList,
+  TabsPanel,
+  TabsTab,
+  Title,
+} from "@mantine/core";
+import classes from "@/app/issues/issues.module.css";
+import Link from "next/link";
+import React, { useState } from "react";
 
-interface Panic extends PanicSummary {
-  errorStack: string | null;
-  avm2Stack: string | null;
-  errorMessage: string;
-  swfUrl: string | null;
-  pageUrl: string | null;
-  commit: string | null;
-}
+const OLD_BUILD_CUTOFF_MS = 180 * 24 * 60 * 60 * 1000;
 
-interface Issue {
-  number: number;
-  open: boolean;
-  created: Date;
-  title: string;
-  labels: string[];
-}
-
-export type IssueWithOptionalPanic = Issue & { panic: Panic | null };
-export type IssueWithPanicSummary = Issue & {
-  panic: PanicSummary;
-};
-
-type GithubIssue =
-  RestEndpointMethodTypes["issues"]["listForRepo"]["response"]["data"][number];
-
-function findMatch(regex: RegExp, contents: string): string | null {
-  const match = contents.match(regex);
-  if (match && match[1]) {
-    return match[1];
-  }
-  return null;
-}
-
-function findPanic(contents: string): Panic | null {
-  // Some reports somehow contain \r...
-  contents = contents.replaceAll("\r", "");
-
-  // e.g. /rustc/82e1608dfa6e0b5569232559e3d385fea5a93112/library/std/src/sys/wasm/../unsupported/locks/mutex.rs
-  contents = contents.replaceAll(
-    /\/rustc\/([a-z0-9]+)\/library/g,
-    "/rustc/.../library",
+function Panic({ panic, info }: { panic: string; info: PanicInfo }) {
+  const title = panic.replace(/\n[^]+$/, "");
+  const oldBuildOnly = !panicAffectsNewBuild(info);
+  return (
+    <Card shadow="sm" radius="md" className={classes.panicCard}>
+      <CardSection inheritPadding py="xs">
+        <Group gap="xs" wrap="nowrap">
+          <Title fw={500} flex="1" order={3}>
+            {title}
+          </Title>
+          {info.numOpenIssues < info.numIssues && (
+            <Badge color="red">{info.numIssues - info.numOpenIssues}</Badge>
+          )}
+          {info.numOpenIssues > 0 && (
+            <Badge color="green">{info.numOpenIssues}</Badge>
+          )}
+        </Group>
+      </CardSection>
+      <CardSection inheritPadding py="xs">
+        <Tabs defaultValue="details">
+          <TabsList>
+            <TabsTab value="details">Details</TabsTab>
+            <TabsTab value="errorMessage">Error Message</TabsTab>
+            <TabsTab value="issues">Issues</TabsTab>
+          </TabsList>
+          <TabsPanel value="details">
+            <List>
+              <ListItem>
+                Reported between{" "}
+                <b>{info.firstReported.toISOString().split("T")[0]}</b> and{" "}
+                <b>{info.lastReported.toISOString().split("T")[0]}</b>
+              </ListItem>
+              {info.firstBuild && info.lastBuild && (
+                <ListItem>
+                  Affects builds between{" "}
+                  <b>{info.firstBuild.toISOString().split("T")[0]}</b> and{" "}
+                  <b>{info.lastBuild.toISOString().split("T")[0]}</b>{" "}
+                  {oldBuildOnly && <Badge color="red">Only Old Builds</Badge>}
+                </ListItem>
+              )}
+            </List>
+          </TabsPanel>
+          <TabsPanel value="errorMessage">
+            <Code block>{panic}</Code>
+          </TabsPanel>
+          <TabsPanel value="issues">
+            <Table>
+              <TableThead>
+                <TableTr>
+                  <TableTh>#</TableTh>
+                  <TableTh>Status</TableTh>
+                  <TableTh>Title</TableTh>
+                  <TableTh>Labels</TableTh>
+                </TableTr>
+              </TableThead>
+              <TableTbody>
+                {info.issues.map((issue, i) => (
+                  <TableTr
+                    key={i}
+                    className={
+                      issue.open ? classes.issueRowOpen : classes.issueRowClosed
+                    }
+                  >
+                    <TableTd>
+                      <Link
+                        href={`https://github.com/ruffle-rs/ruffle/issues/${issue.number}`}
+                        target="_blank"
+                      >
+                        #{issue.number}
+                      </Link>
+                    </TableTd>
+                    <TableTd>
+                      <Badge color={issue.open ? "green" : "red"}>
+                        {issue.open ? "Open" : "Closed"}
+                      </Badge>
+                    </TableTd>
+                    <TableTd>
+                      <Link
+                        href={`https://github.com/ruffle-rs/ruffle/issues/${issue.number}`}
+                        target="_blank"
+                      >
+                        {issue.title.length > 60
+                          ? issue.title.substring(0, 57) + "..."
+                          : issue.title}
+                      </Link>
+                    </TableTd>
+                    <TableTd>{issue.labels.join(", ")}</TableTd>
+                  </TableTr>
+                ))}
+              </TableTbody>
+            </Table>
+          </TabsPanel>
+        </Tabs>
+      </CardSection>
+    </Card>
   );
-
-  const likelyHasError = contents.indexOf("# Error Info\n") > -1;
-
-  const commit = findMatch(/Commit: (\S+)/, contents);
-  const swfUrl = findMatch(/SWF URL: ([^]+?)\n/, contents);
-  const pageUrl = findMatch(/Page URL: ([^]+?)\n/, contents);
-  const errorStack = findMatch(/Error stack:\n```\n([^]+?)\n```/, contents);
-  const avm2Stack = findMatch(/AVM2 stack:\n```\n([^]+?)\n```/, contents);
-
-  let errorMessage = findMatch(
-    /Error message: ([^]+?)\n(?:Error stack|\n#)/,
-    contents,
-  );
-  if (!errorMessage) {
-    // Old style of error message
-    errorMessage = findMatch(/Error: ([^]+?)\n\n/, contents);
-  }
-
-  const buildTimeStr = findMatch(/Built: (\S+)/, contents);
-  let buildTime: Date | null = null;
-  if (buildTimeStr) {
-    buildTime = new Date(buildTimeStr);
-  }
-
-  if (errorMessage) {
-    if (likelyHasError || errorStack || avm2Stack) {
-      return {
-        commit,
-        buildTime,
-        swfUrl,
-        pageUrl,
-        errorStack,
-        avm2Stack,
-        errorMessage,
-      };
-    }
-  }
-
-  return null;
 }
 
-function processIssue(issue: GithubIssue): IssueWithOptionalPanic {
-  return {
-    number: issue.number,
-    open: issue.state === "open",
-    created: new Date(issue.created_at),
-    panic: findPanic(issue.body ?? ""),
-    title: issue.title,
-    labels: issue.labels
-      .map((label) => (typeof label === "string" ? label : label.name ?? ""))
-      .filter((label) => label),
+type SortType = "totalIssues" | "openIssues" | "firstReported" | "lastReported";
+
+const SortTypes: {
+  [name in SortType]: {
+    label: string;
+    sortFn: (a: PanicInfo, b: PanicInfo) => number;
   };
+} = {
+  totalIssues: {
+    label: "Sort By Total Issues",
+    sortFn: (a: PanicInfo, b: PanicInfo) => b.numIssues - a.numIssues,
+  },
+  openIssues: {
+    label: "Sort By Open Issues",
+    sortFn: (a: PanicInfo, b: PanicInfo) => b.numOpenIssues - a.numOpenIssues,
+  },
+  firstReported: {
+    label: "Sort By First Report",
+    sortFn: (a: PanicInfo, b: PanicInfo) =>
+      b.firstReported.getTime() - a.firstReported.getTime(),
+  },
+  lastReported: {
+    label: "Sort By Last Report",
+    sortFn: (a: PanicInfo, b: PanicInfo) =>
+      b.lastReported.getTime() - a.lastReported.getTime(),
+  },
+};
+
+function FilterBar({
+  sort,
+  setSort,
+  includeOldBuilds,
+  setIncludeOldBuilds,
+  includeNewBuilds,
+  setIncludeNewBuilds,
+}: {
+  sort: SortType;
+  setSort: (sort: SortType) => void;
+  includeOldBuilds: boolean;
+  setIncludeOldBuilds: (value: boolean) => void;
+  includeNewBuilds: boolean;
+  setIncludeNewBuilds: (value: boolean) => void;
+}) {
+  return (
+    <Card shadow="sm" radius="md" className={classes.filterBar}>
+      <Group>
+        <Checkbox
+          label="Affects Old Builds"
+          checked={includeOldBuilds}
+          onChange={(event) => setIncludeOldBuilds(event.currentTarget.checked)}
+        />
+        <Checkbox
+          label=" Affects New Builds"
+          checked={includeNewBuilds}
+          onChange={(event) => setIncludeNewBuilds(event.currentTarget.checked)}
+        />
+        <Select
+          data={Object.entries(SortTypes).map(([name, type]) => ({
+            value: name,
+            label: type.label,
+          }))}
+          value={sort}
+          onChange={(value) => setSort(value as SortType)}
+          allowDeselect={false}
+          classNames={{
+            input: classes.sortSelectInput,
+            dropdown: classes.sortSelectDropdown,
+            option: classes.sortSelectOption,
+          }}
+        />
+      </Group>
+    </Card>
+  );
 }
 
-const getAllIssues = async () => {
-  const octokit = createOctokit();
-  const processedIssues: IssueWithOptionalPanic[] = [];
-  const iterator = octokit.paginate.iterator(octokit.rest.issues.listForRepo, {
-    owner: "ruffle-rs",
-    repo: "ruffle",
-    per_page: 100,
-    state: "all",
-  });
-
-  for await (const { data: issues } of iterator) {
-    for (const issue of issues) {
-      if (!issue.pull_request) {
-        processedIssues.push(processIssue(issue));
-      }
-    }
-  }
-
-  return processedIssues;
-};
-
-let _cachedAllIssues: IssueWithOptionalPanic[] = [];
-const getAllIssuesCached = async () => {
-  if (_cachedAllIssues.length === 0) {
-    _cachedAllIssues = await getAllIssues();
-  }
-  return _cachedAllIssues;
-};
-
-type IssuesByPanic = {
-  [message: string]: PanicInfo;
-};
-
-export interface PanicInfo {
-  issues: IssueWithPanicSummary[];
-  numIssues: number;
-  numOpenIssues: number;
-  firstReported: Date;
-  lastReported: Date;
-  firstBuild: Date | null;
-  lastBuild: Date | null;
+// These two functions are *not* opposite. Something can affect an old and new build.
+function panicAffectsOldBuild(panic: PanicInfo) {
+  // It's assumed that if there was new build date, it's a *really* old build.
+  return (
+    panic.firstBuild === null ||
+    new Date().getTime() - panic.firstBuild.getTime() >= OLD_BUILD_CUTOFF_MS
+  );
 }
 
-export async function getAllOpenPanics() {
-  const result: IssuesByPanic = {};
-  let totalIssues = 0;
-  let totalOpenIssues = 0;
-  const issues = await getAllIssuesCached();
+function panicAffectsNewBuild(panic: PanicInfo) {
+  return (
+    panic.lastBuild !== null &&
+    new Date().getTime() - panic.lastBuild.getTime() < OLD_BUILD_CUTOFF_MS
+  );
+}
 
-  for (const issue of issues) {
-    totalIssues++;
-    if (issue.open) {
-      totalOpenIssues++;
-    }
+export function PanicList({ allPanics }: { allPanics: IssuesByPanic }) {
+  const [sort, setSort] = useState<SortType>("totalIssues");
+  const [includeOldBuilds, setIncludeOldBuilds] = useState<boolean>(true);
+  const [includeNewBuilds, setIncludeNewBuilds] = useState<boolean>(true);
 
-    if (issue.panic) {
-      if (!(issue.panic.errorMessage in result)) {
-        result[issue.panic.errorMessage] = {
-          firstBuild: issue.panic.buildTime,
-          firstReported: issue.created,
-          lastBuild: issue.panic.buildTime,
-          lastReported: issue.created,
-          issues: [],
-          numIssues: 0,
-          numOpenIssues: 0,
-        };
+  const sorted = Object.entries(allPanics)
+    .filter((entry) => {
+      if (!includeNewBuilds && panicAffectsNewBuild(entry[1])) {
+        return false;
       }
-      const panicInfo = result[issue.panic.errorMessage];
-      panicInfo.numIssues += 1;
-      panicInfo.issues.push({
-        panic: {
-          buildTime: issue.panic.buildTime,
-        },
-        created: issue.created,
-        open: issue.open,
-        number: issue.number,
-        labels: issue.labels,
-        title: issue.title,
-      });
-      if (issue.open) {
-        panicInfo.numOpenIssues += 1;
+      if (!includeOldBuilds && panicAffectsOldBuild(entry[1])) {
+        return false;
       }
-      if (issue.created < panicInfo.firstReported) {
-        panicInfo.firstReported = issue.created;
-      }
-      if (issue.created > panicInfo.lastReported) {
-        panicInfo.lastReported = issue.created;
-      }
-      if (issue.panic.buildTime) {
-        if (
-          panicInfo.firstBuild === null ||
-          issue.panic.buildTime < panicInfo.firstBuild
-        ) {
-          panicInfo.firstBuild = issue.panic.buildTime;
-        }
-        if (
-          panicInfo.lastBuild === null ||
-          issue.panic.buildTime > panicInfo.lastBuild
-        ) {
-          panicInfo.lastBuild = issue.panic.buildTime;
-        }
-      }
-    }
-  }
+      return true;
+    })
+    .sort((a, b) => SortTypes[sort].sortFn(a[1], b[1]));
 
-  for (const errorMessage of Object.keys(result)) {
-    if (result[errorMessage]?.numOpenIssues === 0) {
-      delete result[errorMessage];
-    }
-  }
-
-  return { totalIssues, totalOpenIssues, allPanics: result };
+  return (
+    <>
+      <FilterBar
+        sort={sort}
+        setSort={setSort}
+        includeOldBuilds={includeOldBuilds}
+        includeNewBuilds={includeNewBuilds}
+        setIncludeOldBuilds={setIncludeOldBuilds}
+        setIncludeNewBuilds={setIncludeNewBuilds}
+      />
+      <Stack>
+        {sorted.map(([panic, info], index) => (
+          <Panic key={index} panic={panic} info={info} />
+        ))}
+      </Stack>
+    </>
+  );
 }
